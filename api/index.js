@@ -1,28 +1,44 @@
 import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 
 const app = express();
-
-// Разрешаем запросы с любых доменов (для Netlify, localhost и т.д.)
 app.use(cors());
 app.use(express.json());
 
+// === Supabase ===
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// ===== ТЕСТОВЫЕ ЭНДПОИНТЫ =====
-app.get('/api/ping', (req, res) => {
-  res.json({ ping: true, time: Date.now() });
-});
+// === Вспомогательные функции ===
+const generateToken = (userId, nickname) => {
+  return jwt.sign({ userId, nickname }, JWT_SECRET, { expiresIn: '30d' });
+};
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+const getUserFromToken = async (token) => {
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, nickname')
+      .eq('id', decoded.userId)
+      .single();
+    return user;
+  } catch {
+    return null;
+  }
+};
 
-// ===== АВТОРИЗАЦИЯ =====
-// Регистрация
+// === Тестовые эндпоинты ===
+app.get('/api/ping', (req, res) => res.json({ ping: true, time: Date.now() }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+// === Регистрация ===
 app.post('/api/auth/register', async (req, res) => {
   const { nickname, password, servers } = req.body;
   
@@ -34,44 +50,99 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'Max 5 servers' });
   }
   
-  // TODO: сохранить в Supabase
-  res.status(201).json({
-    token: 'test-token-' + Date.now(),
-    user: { id: Date.now(), nickname, servers }
-  });
+  const passwordHash = await bcrypt.hash(password, 10);
+  
+  const { data: user, error } = await supabase
+    .from('users')
+    .insert({ nickname, password_hash: passwordHash })
+    .select()
+    .single();
+  
+  if (error) {
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'Nickname already exists' });
+    }
+    return res.status(500).json({ error: 'Registration failed' });
+  }
+  
+  // Добавляем сервера
+  const serverRows = servers.map(s => ({ user_id: user.id, server_id: s }));
+  await supabase.from('user_servers').insert(serverRows);
+  
+  const token = generateToken(user.id, user.nickname);
+  res.status(201).json({ token, user: { id: user.id, nickname: user.nickname, servers } });
 });
 
-// Вход
+// === Вход ===
 app.post('/api/auth/login', async (req, res) => {
   const { nickname, password } = req.body;
   
-  if (!nickname || !password) {
-    return res.status(400).json({ error: 'Missing credentials' });
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('id, nickname, password_hash')
+    .eq('nickname', nickname)
+    .single();
+  
+  if (error || !user) {
+    return res.status(401).json({ error: 'Invalid credentials' });
   }
   
-  // TODO: проверить в Supabase
-  res.status(200).json({
-    token: 'test-token-' + Date.now(),
-    user: { id: Date.now(), nickname, servers: ['32'] }
-  });
+  const valid = await bcrypt.compare(password, user.password_hash);
+  if (!valid) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  
+  const { data: serversData } = await supabase
+    .from('user_servers')
+    .select('server_id')
+    .eq('user_id', user.id);
+  
+  const servers = serversData?.map(s => s.server_id) || [];
+  const token = generateToken(user.id, user.nickname);
+  
+  res.status(200).json({ token, user: { id: user.id, nickname: user.nickname, servers } });
 });
 
-// Получить текущего пользователя
+// === Получить текущего пользователя (исправлено) ===
 app.get('/api/auth/me', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserFromToken(token);
   
-  if (!token) {
+  if (!user) {
     return res.status(401).json({ user: null });
   }
   
-  // TODO: проверить токен
-  res.status(200).json({
-    user: { id: 1, nickname: 'TestUser', servers: ['32'] }
-  });
+  const { data: serversData } = await supabase
+    .from('user_servers')
+    .select('server_id')
+    .eq('user_id', user.id);
+  
+  const servers = serversData?.map(s => s.server_id) || [];
+  res.status(200).json({ user: { ...user, servers } });
 });
 
-// ===== ЧАТЫ =====
-// Временное хранилище сообщений (в памяти)
+// === Обновление серверов ===
+app.post('/api/auth/updateServers', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserFromToken(token);
+  
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const { servers } = req.body;
+  if (!servers || !Array.isArray(servers) || servers.length === 0 || servers.length > 5) {
+    return res.status(400).json({ error: 'Invalid servers list' });
+  }
+  
+  await supabase.from('user_servers').delete().eq('user_id', user.id);
+  const serverRows = servers.map(s => ({ user_id: user.id, server_id: s }));
+  await supabase.from('user_servers').insert(serverRows);
+  
+  res.status(200).json({ success: true, servers });
+});
+
+// === Чаты ===
 const messages = [];
 
 app.get('/api/messages', (req, res) => {
@@ -81,13 +152,14 @@ app.get('/api/messages', (req, res) => {
 });
 
 app.post('/api/messages', async (req, res) => {
-  const { server, chat, text } = req.body;
   const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserFromToken(token);
   
-  if (!token) {
+  if (!user) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
+  const { server, chat, text } = req.body;
   if (!text?.trim()) {
     return res.status(400).json({ error: 'Message is empty' });
   }
@@ -96,8 +168,8 @@ app.post('/api/messages', async (req, res) => {
     id: Date.now(),
     server,
     chat,
-    nickname: 'TestUser',
-    user_id: 1,
+    user_id: user.id,
+    nickname: user.nickname,
     text: text.trim(),
     created_at: new Date().toISOString()
   };
@@ -106,8 +178,31 @@ app.post('/api/messages', async (req, res) => {
   res.status(201).json(newMsg);
 });
 
-// ===== ЗАПУСК СЕРВЕРА =====
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+// === Заглушка для Google (чтобы не было ошибок) ===
+app.post('/api/auth/google', async (req, res) => {
+  const { email, nickname, supabaseId } = req.body;
+  
+  // Проверяем, есть ли пользователь с таким email
+  let { data: user } = await supabase
+    .from('users')
+    .select('id, nickname')
+    .eq('nickname', nickname)
+    .single();
+  
+  if (!user) {
+    // Создаём нового пользователя
+    const { data: newUser } = await supabase
+      .from('users')
+      .insert({ nickname, password_hash: 'google_oauth' })
+      .select()
+      .single();
+    user = newUser;
+  }
+  
+  const token = generateToken(user.id, user.nickname);
+  res.status(200).json({ token, user: { ...user, servers: ['32'] } });
 });
+
+// === Запуск ===
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
