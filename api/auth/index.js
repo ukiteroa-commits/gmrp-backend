@@ -1,30 +1,105 @@
-echo import express from 'express'; > api\index.js
-echo import authRoutes from './auth/index.js'; >> api\index.js
-echo import messagesRoutes from './messages/index.js'; >> api\index.js
-echo import tradesRoutes from './trades/index.js'; >> api\index.js
-echo import eventsRoutes from './events/index.js'; >> api\index.js
-echo. >> api\index.js
-echo const app = express(); >> api\index.js
-echo app.use(express.json()); >> api\index.js
-echo. >> api\index.js
-echo app.use('/api/auth', authRoutes); >> api\index.js
-echo app.use('/api/messages', messagesRoutes); >> api\index.js
-echo app.use('/api/trades', tradesRoutes); >> api\index.js
-echo app.use('/api/events', eventsRoutes); >> api\index.js
-echo. >> api\index.js
-echo app.get('/api/health', (req, res) => res.json({ status: 'ok' })); >> api\index.js
-echo app.get('/api/ping', (req, res) => res.json({ ping: true })); >> api\index.js
-echo. >> api\index.js
-echo const PORT = process.env.PORT || 3001; >> api\index.js
-echo app.listen(PORT, () => console.log(`Server running on port ${PORT}`)); >> api\index.jsecho import { Router } from 'express'; > api\auth\index.js
-echo import register from './register.js'; >> api\auth\index.js
-echo import login from './login.js'; >> api\auth\index.js
-echo import me from './me.js'; >> api\auth\index.js
-echo import updateServers from './updateServers.js'; >> api\auth\index.js
-echo. >> api\auth\index.js
-echo const router = Router(); >> api\auth\index.js
-echo router.post('/register', register); >> api\auth\index.js
-echo router.post('/login', login); >> api\auth\index.js
-echo router.get('/me', me); >> api\auth\index.js
-echo router.post('/updateServers', updateServers); >> api\auth\index.js
-echo export default router; >> api\auth\index.js
+import express from 'express';
+import { createClient } from '@supabase/supabase-js';
+
+const app = express();
+app.use(express.json());
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// ===== ТЕСТОВЫЕ ЭНДПОИНТЫ =====
+app.get('/api/ping', (req, res) => {
+  res.json({ ping: true, time: Date.now() });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ===== АВТОРИЗАЦИЯ =====
+// Регистрация
+app.post('/api/auth/register', async (req, res) => {
+  const { nickname, password, servers } = req.body;
+  
+  if (!nickname || !password || password.length < 4 || !servers?.length) {
+    return res.status(400).json({ error: 'Invalid registration data' });
+  }
+  
+  // Временная заглушка (позже добавим сохранение в Supabase)
+  res.status(201).json({
+    token: 'test-token-' + Date.now(),
+    user: { id: Date.now(), nickname, servers }
+  });
+});
+
+// Вход
+app.post('/api/auth/login', async (req, res) => {
+  const { nickname, password } = req.body;
+  
+  if (!nickname || !password) {
+    return res.status(400).json({ error: 'Missing credentials' });
+  }
+  
+  // Временная заглушка
+  res.status(200).json({
+    token: 'test-token-' + Date.now(),
+    user: { id: Date.now(), nickname, servers: ['32'] }
+  });
+});
+
+// Получить текущего пользователя
+app.get('/api/auth/me', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ user: null });
+  }
+  
+  // Временная заглушка
+  res.status(200).json({
+    user: { id: 1, nickname: 'TestUser', servers: ['32'] }
+  });
+});
+
+// ===== ЧАТЫ =====
+// Временное хранилище сообщений (в памяти)
+const messages = [];
+
+app.get('/api/messages', (req, res) => {
+  const { server, chat } = req.query;
+  const filtered = messages.filter(m => m.server === server && m.chat === chat);
+  res.json(filtered.slice(-100));
+});
+
+app.post('/api/messages', async (req, res) => {
+  const { server, chat, text } = req.body;
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  if (!text?.trim()) {
+    return res.status(400).json({ error: 'Message is empty' });
+  }
+  
+  const newMsg = {
+    id: Date.now(),
+    server,
+    chat,
+    nickname: 'TestUser',
+    user_id: 1,
+    text: text.trim(),
+    created_at: new Date().toISOString()
+  };
+  
+  messages.push(newMsg);
+  res.status(201).json(newMsg);
+});
+
+// ===== ЗАПУСК СЕРВЕРА =====
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
