@@ -1,0 +1,13 @@
+echo { > render.json
+echo   "schema-version": "1.0", >> render.json
+echo   "name": "gmrp-backend", >> render.json
+echo   "type": "nodejs", >> render.json
+echo   "nodeVersion": "20", >> render.json
+echo   "buildCommand": "npm install", >> render.json
+echo   "startCommand": "node api/index.js", >> render.json
+echo   "env": { >> render.json
+echo     "SUPABASE_URL": { "required": true }, >> render.json
+echo     "SUPABASE_ANON_KEY": { "required": true }, >> render.json
+echo     "JWT_SECRET": { "required": true } >> render.json
+echo   } >> render.json
+echo } >> render.json
