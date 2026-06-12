@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { censorText } from './_lib/censorship.js';
 
 const app = express();
@@ -18,16 +18,8 @@ const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// === Настройка почты ===
-const transporter = nodemailer.createTransport({
-  host: 'smtp.yandex.ru',
-  port: 465,
-  secure: true,
-  auth: {
-    user: 'alukardgame1@yandex.ru',
-    pass: process.env.EMAIL_PASSWORD || 'your_yandex_app_password', // Пароль приложения Яндекс
-  },
-});
+// Resend для отправки писем
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const generateToken = (userId, nickname) => {
   return jwt.sign({ userId, nickname }, JWT_SECRET, { expiresIn: '30d' });
@@ -170,25 +162,20 @@ app.post('/api/auth/avatar', async (req, res) => {
   res.json({ success: true, avatar_url });
 });
 
-// === Заказы артов (с отправкой на почту) ===
+// === Заказы артов (с отправкой на почту через Resend) ===
 app.post('/api/orders', upload.single('image'), async (req, res) => {
   console.log('📥 Получен запрос на заказ');
-  console.log('Body:', req.body);
-  console.log('File:', req.file);
-  
-  const { nickname, contacts, prompt } = req.body;
-  const file = req.file;
-  
-  if (!nickname || !contacts || !prompt || !file) {
-    console.log('❌ Ошибка: не все поля заполнены');
-    return res.status(400).json({ error: 'Missing fields' });
-  }
   
   try {
+    const { nickname, contacts, prompt } = req.body;
+    const file = req.file;
+    
+    if (!nickname || !contacts || !prompt || !file) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+    
     // Загружаем в Supabase Storage
     const fileName = `${Date.now()}_${file.originalname}`;
-    console.log('📤 Загружаем файл:', fileName);
-    
     const { data, error } = await supabase.storage
       .from('order_images')
       .upload(fileName, file.buffer, { contentType: file.mimetype });
@@ -210,26 +197,26 @@ app.post('/api/orders', upload.single('image'), async (req, res) => {
       console.error('❌ Ошибка сохранения в БД:', dbError);
     }
     
-    // Отправляем на почту
-    const mailOptions = {
-      from: 'alukardgame1@yandex.ru',
+    // Отправляем письмо через Resend
+    const { data: emailData, error: emailError } = await resend.emails.send({
+      from: 'onboarding@resend.dev',
       to: 'alukardgame1@yandex.ru',
       subject: `🎨 Новый заказ арта от ${nickname}`,
       html: `
         <h2>🎨 Новый заказ арта/видео</h2>
         <p><strong>👤 Ник:</strong> ${nickname}</p>
         <p><strong>📞 Контакты:</strong> ${contacts}</p>
-        <p><strong>📝 Описание (промт):</strong></p>
-        <p><pre style="background:#f0f0f0;padding:10px;border-radius:5px;">${prompt}</pre></p>
-        <p><strong>🖼️ Скриншот:</strong> <a href="${imageUrl}">Скачать / посмотреть</a></p>
+        <p><strong>📝 Промт:</strong><br/>${prompt}</p>
+        <p><strong>🖼️ Скриншот:</strong><br/><a href="${imageUrl}">Открыть</a></p>
         <p><strong>📅 Дата:</strong> ${new Date().toLocaleString()}</p>
-        <hr/>
-        <p style="font-size:12px;color:#666;">Ответь заказчику в Telegram или Discord: ${contacts}</p>
       `,
-    };
+    });
     
-    await transporter.sendMail(mailOptions);
-    console.log('✅ Письмо отправлено на почту');
+    if (emailError) {
+      console.error('❌ Ошибка Resend:', emailError);
+    } else {
+      console.log('✅ Письмо отправлено:', emailData);
+    }
     
     res.json({ success: true });
   } catch (err) {
