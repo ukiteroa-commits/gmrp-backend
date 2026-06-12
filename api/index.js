@@ -18,7 +18,7 @@ const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// Resend для отправки писем
+// Resend для отправки писем (только на ukiteroa@gmail.com)
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const generateToken = (userId, nickname) => {
@@ -162,7 +162,7 @@ app.post('/api/auth/avatar', async (req, res) => {
   res.json({ success: true, avatar_url });
 });
 
-// === Заказы артов (с отправкой на почту через Resend) ===
+// === ЗАКАЗЫ АРТОВ (с отправкой на почту через Resend) ===
 app.post('/api/orders', upload.single('image'), async (req, res) => {
   console.log('📥 Получен запрос на заказ');
   
@@ -197,10 +197,10 @@ app.post('/api/orders', upload.single('image'), async (req, res) => {
       console.error('❌ Ошибка сохранения в БД:', dbError);
     }
     
-    // Отправляем письмо через Resend
+    // Отправляем письмо через Resend (только на твой email в Resend)
     const { data: emailData, error: emailError } = await resend.emails.send({
       from: 'onboarding@resend.dev',
-      to: 'alukardgame1@yandex.ru',
+      to: 'ukiteroa@gmail.com',  // ← ТВОЙ EMAIL В RESEND (письма приходят сюда)
       subject: `🎨 Новый заказ арта от ${nickname}`,
       html: `
         <h2>🎨 Новый заказ арта/видео</h2>
