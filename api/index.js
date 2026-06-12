@@ -3,7 +3,7 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { censorText } from '../client/src/utils/censorship.js';
+import { censorText } from './_lib/censorship.js';
 
 const app = express();
 app.use(cors());
