@@ -15,7 +15,13 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+
+// Обычный клиент (для чтения)
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Админ-клиент (для записи)
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -243,7 +249,7 @@ app.post('/api/orders', upload.single('image'), async (req, res) => {
   }
 });
 
-// === ЧАТЫ (с сохранением в Supabase) ===
+// === ЧАТЫ (с использованием supabaseAdmin для записи) ===
 const userLastMessageTime = {};
 
 app.get('/api/messages', async (req, res) => {
@@ -301,7 +307,8 @@ app.post('/api/messages', async (req, res) => {
       return res.status(400).json({ error: 'Message contains prohibited content' });
     }
     
-    const { data, error } = await supabase
+    // Используем supabaseAdmin для вставки (обходит RLS)
+    const { data, error } = await supabaseAdmin
       .from('messages')
       .insert({
         server,
@@ -419,7 +426,7 @@ app.delete('/api/trades/:id', async (req, res) => {
   }
 });
 
-// === Cars и Stocks (заглушки, возвращающие пустой массив) ===
+// === Cars и Stocks (заглушки) ===
 app.get('/api/cars', async (req, res) => {
   console.log('📥 GET /api/cars', req.query);
   res.json([]);
